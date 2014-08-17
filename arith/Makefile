@@ -1,8 +1,10 @@
+SOURCES=main.hs Types.hs Tokens.hs Lexer.hs ParseMonad.lhs
+
 parser: Parser.y
 	happy Parser.y
 
-f: parser main.hs Types.hs Tokens.hs Lexer.hs ParseMonad.hs
-	ghc --make main.hs Parser.hs Types.hs Lexer.hs Tokens.hs ParseMonad.hs
+f: parser $(SOURCES)
+	ghc --make $(SOURCES)
 
 test: all
 	./main test.f
