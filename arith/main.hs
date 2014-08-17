@@ -5,7 +5,7 @@ import System.Environment
 import Data.List
 
 isnumeric :: Term -> Bool
-isnumeric (TZero _) = True
+isnumeric (TNum _ _) = True
 isnumeric (TSucc _ t) = isnumeric t
 isnumeric _ = False
 
@@ -27,14 +27,14 @@ evalT1 (TSucc info t) =
   case evalT1 t of
     Just t' -> Just (TSucc info t')
     Nothing -> Nothing
-evalT1 (TPred _ (TZero _)) = Just (TZero Unknown)
+evalT1 (TPred _ (TNum _ 0)) = Just (TNum Unknown 0)
 evalT1 (TPred _ (TSucc _ n))
   | isnumeric n = Just n
 evalT1 (TPred info t) =
   case evalT1 t of
     Just t' -> Just (TPred info t')
     Nothing -> Nothing
-evalT1 (TIsZero _ (TZero _)) = Just (TTrue Unknown)
+evalT1 (TIsZero _ (TNum _ 0)) = Just (TTrue Unknown)
 evalT1 (TIsZero _ (TSucc _ n))
   | isnumeric n = Just (TFalse Unknown)
 evalT1 (TIsZero info t) =
@@ -48,23 +48,12 @@ eval t = case evalT1 t of
   Just t' -> eval t'
   Nothing -> t
 
-cleanAST :: [Maybe Term] -> [Term]
-cleanAST [] = []
-cleanAST (Nothing:ts) = cleanAST ts
-cleanAST ((Just t):ts) = t : cleanAST ts
-
 main = do
   args <- getArgs
   let filename = head args
   handle <- openFile filename ReadMode
   contents <- hGetContents handle  
-  let expressions = filter (\x -> x /= "") (lines contents)
-      ast = map (parse . lexer) expressions
-      cleaned = cleanAST ast
-      result = map eval cleaned
-  mapM_ putStrLn (map show result)
---  print $ eval (TTrue Unknown)
---  print $ eval (TIf Unknown (TFalse Unknown) (TTrue Unknown) (TFalse Unknown))
---  print $ eval (TZero Unknown)
---  print $ eval (TSucc Unknown (TPred Unknown (TZero Unknown)))
---  print $ eval (TIsZero Unknown (TPred Unknown (TSucc Unknown (TSucc Unknown (TZero Unknown)))))
+  let result = runP parse contents 1
+  case result of
+    OkP result' -> mapM_ putStrLn (map (show . eval) result')
+    FailedP err -> putStrLn err

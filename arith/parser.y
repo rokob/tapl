@@ -1,99 +1,55 @@
 {
-module Parser where
+module Parser (
+  parse,
+  runP,
+  ParseResult(..)
+) where
 
+import ParseMonad
+import Lexer
+import Tokens
 import Types
-import Data.Char
 }
 
-%name parseInner
+%name parse
 %tokentype { Token }
-%error { parseError }
+%monad { P }
+%lexer { lexer } { TokenEOF }
 
 %token
-  if            { TokenIf }
-  then          { TokenThen }
-  else          { TokenElse }
-  '0'           { TokenZero }
-  '1'           { TokenOne }
-  iszero        { TokenIsZero }
-  pred          { TokenPred }
-  succ          { TokenSucc }
-  true          { TokenTrue }
-  false         { TokenFalse }
-  '('           { TokenOP }
-  ')'           { TokenCP }
-  ';'           { TokenSemi }
+  if            { TokenKW TokenIf }
+  then          { TokenKW TokenThen }
+  else          { TokenKW TokenElse }
+  int           { TokenNumber $$ TokenNum }
+  iszero        { TokenKW TokenIsZero }
+  pred          { TokenKW TokenPred }
+  succ          { TokenKW TokenSucc }
+  true          { TokenKW TokenTrue }
+  false         { TokenKW TokenFalse }
+  '('           { TokenKW TokenOP }
+  ')'           { TokenKW TokenCP }
+  ';'           { TokenKW TokenSemi }
 
 %%
 
-Exp    : if Exp1 then Exp1 else Exp1 ';'  { TIf Unknown $2 $4 $6 }
-       | Value ';' { $1 }
-       | iszero Exp1 ';' { TIsZero Unknown $2 }
-       | Exp1 ';' { $1 }
+ExpList : Exp ';' ExpList { $1 : $3 }
+        | {- empty -} { [] }
 
-Exp1   : pred Exp1 { TPred Unknown $2 }
-       | succ Exp1 { TSucc Unknown $2 }
+Exp    : if Exp then Exp else Exp  {% getLineNo >>= \l -> return (TIf (Info "" l) $2 $4 $6) }
+       | pred Exp { TPred Unknown $2 }
+       | succ Exp { TSucc Unknown $2 }
+       | iszero Exp { TIsZero Unknown $2 }
        | Value { $1 }
 
 Value  : true  { TTrue Unknown }
        | false { TFalse Unknown }
-       | '0'   { TZero Unknown  }
-       | '1'   { TSucc Unknown (TZero Unknown)  }
-       | '(' Exp1 ')' { $2 }
+       | int   {% getLineNo >>= \l -> return (TNum (Info "" l) $1) }
+       | '(' Exp ')' { $2 }
 
 {
 
-data Token
-  = TokenIf
-  | TokenThen
-  | TokenElse
-  | TokenZero
-  | TokenOne
-  | TokenIsZero
-  | TokenPred
-  | TokenSucc
-  | TokenTrue
-  | TokenFalse
-  | TokenOP
-  | TokenCP
-  | TokenSemi
-  deriving (Show)
 
-lexer :: String -> [Token]
-lexer [] = []
-lexer (c:cs) 
-      | isComment c cs = lexComment (tail cs)
-      | isSpace c = lexer cs
-      | isAlpha c = lexVar (c:cs)
-lexer ('0':cs) = TokenZero : lexer cs
-lexer ('1':cs) = TokenOne : lexer cs
-lexer ('(':cs) = TokenOP : lexer cs
-lexer (')':cs) = TokenCP : lexer cs
-lexer (';':cs) = TokenSemi : lexer cs
-
-lexVar cs =
-   case span isAlpha cs of
-      ("if",rest) -> TokenIf : lexer rest
-      ("then",rest)  -> TokenThen : lexer rest
-      ("else",rest)  -> TokenElse : lexer rest
-      ("iszero",rest)  -> TokenIsZero : lexer rest
-      ("pred",rest)  -> TokenPred : lexer rest
-      ("succ",rest)  -> TokenSucc : lexer rest
-      ("true",rest)  -> TokenTrue : lexer rest
-      ("false",rest)  -> TokenFalse : lexer rest
-
-isComment '/' ('*':xs) = True
-isComment _ _ = False
-
-lexComment "*/" = lexer []
-lexComment ('*':'/':xs) = lexer xs
-lexComment (x:xs) = lexComment xs
-
-parseError :: [Token] -> a
-parseError _ = error "Parse error"
-
-parse :: [Token] -> Maybe Term
-parse [] = Nothing
-parse ts = Just (parseInner ts)
+happyError :: P a
+happyError = getLineNo >>= \l -> fail (show l ++ ": Parse error\n")
 
 }
