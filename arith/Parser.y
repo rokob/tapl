@@ -47,9 +47,6 @@ Value  : true  { TTrue Unknown }
        | '(' Exp ')' { $2 }
 
 {
-
-
 happyError :: P a
 happyError = getLineNo >>= \l -> fail (show l ++ ": Parse error\n")
-
 }
