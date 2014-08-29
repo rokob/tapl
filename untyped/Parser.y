@@ -1,9 +1,6 @@
 {
 module Parser (
-  parse,
-  runP,
   prettyRun,
-  Value(..)
 ) where
 
 import Lexer
@@ -26,26 +23,28 @@ import Control.Monad
 
 File : Stmts { \ctx -> let (stmts,ctx') = ($1 ctx) in (ParseResult stmts ctx') }
 
-Stmts : Term ';' Stmts { \ctx -> let (stmts,ctx') = ($3 ctx) in (($1:stmts),ctx) }
+Stmts : Stmt ';' Stmts { \ctx -> let (stmts,ctx') = ($3 ctx) in (($1:stmts),ctx) }
      | {- empty -} { \ctx -> ([],ctx) }
 
-Term : App { $1 }
-     | lambda var dot Term { mkAbsNode $2 $4 }
-     | lambda uscore dot Term { mkAbsNode $2 $4 }
+Stmt : App { $1 }
+     | lambda var dot Stmt { mkAbsNode $2 $4 }
+     | lambda uscore dot Stmt { mkAbsNode $2 $4 }
 
-App : Value { $1 }
-    | App Value { mkAppNode $1 $2 }
+App : Term { $1 }
+    | App Term { mkAppNode $1 $2 }
 
-Value : '(' Term ')' { $2 }
+Term : '(' Stmt ')' { $2 }
       | var { mkVarNode $1  }
 
 {
 
-type ParseNode = Context -> Value
+type ParseNode = Context -> Term
 data ParseResult = ParseResult [ParseNode] Context
 
 instance Show ParseResult where
   show (ParseResult nodes cxt) = "ParseResult<" ++ (show (map (\f -> f cxt) nodes)) ++ ">"
+
+-- Parsing Helpers
 
 mkVarNode :: Token -> ParseNode
 mkVarNode (Var info s) = \ctx -> 
@@ -71,14 +70,16 @@ mkAppNode n1 n2 = \ctx ->
 
 -- TAbs has the String used in the actual program text as well as the term under the abstraction
 -- TVar has the index of the variable as well as the length of the context it was defined in
-data Value =
-    TAbs Info String Value
-  | TApp Value Value
+data Term =
+    TAbs Info String Term
+  | TApp Term Term
   | TVar Info Int Int
   | TFail Info String
   deriving (Show)
 
-data Result = Result Value Context
+-- Wrapper
+
+data Result = Result Term Context
 
 instance Show Result where
   show (Result (TAbs i s val) ctx) =
@@ -91,9 +92,11 @@ instance Show Result where
   show (Result (TApp val1 val2) ctx) = "(" ++ (show (Result val1 ctx)) ++ ") (" ++ (show (Result val2 ctx)) ++ ")" 
   show (Result (TVar i k len) ctx) =
     case nameOfIndex ctx k of
-      Nothing -> "FAIL"
+      Nothing -> error "Unknown variable"
       Just s -> s
-  show _ = "FAIL"
+  show (Result (TFail i msg) ctx) = error ("Result show failure (" ++ (show i) ++ "): " ++ msg)
+
+-- Context Helpers
 
 type Context = [(String, Binding)]
 data Binding = NameBinding
@@ -139,16 +142,67 @@ indexOfName ((x,_):xs) s
     Just n  -> Just (1 + n)
     Nothing -> Nothing
 
-isValue :: Value -> Bool
-isValue (TAbs _ _ _) = True
-isValue _ = False
+isValue :: Context -> Term -> Bool
+isValue _ (TAbs _ _ _) = True
+isValue _ _ = False
 
-runP :: String -> [Value]
+-- Substitution
+
+shifty :: (Info -> Int -> Int -> Int -> Term) -> Int -> Term -> Term
+shifty f k v =
+  let walk c (TVar i x n)  = f i c x n
+      walk c (TAbs i x t') = (TAbs i x (walk (c+1) t'))
+      walk c (TApp t1 t2)  = (TApp (walk c t1) (walk c t2))
+  in (walk k v)
+
+termShift' :: Int -> Int -> Term -> Term
+termShift' d c t = shifty (\i n x k ->
+  if x >= n
+  then (TVar i (x+d) (k+d))
+  else (TVar i x (k+d))) c t
+
+termShift :: Int -> Term -> Term
+termShift d t = termShift' d 0 t
+
+termSubst' :: Int -> Term -> Term -> Term
+termSubst' j v t = shifty (\i n x k ->
+  if x==j+n
+  then termShift n v
+  else (TVar i x k)) 0 t
+
+termSubst :: Term -> Term -> Term
+termSubst val intoTerm = termShift (-1) (termSubst' 0 (termShift 1 val) intoTerm)
+
+-- Evaluation
+
+eval1 :: Context -> Term -> Maybe Term
+eval1 ctx (TApp (TAbs _ x t) v)
+  | isValue ctx v = Just (termSubst v t)
+eval1 ctx (TApp v t)
+  | isValue ctx v = case eval1 ctx t of
+    Nothing -> Nothing
+    Just t' -> Just (TApp v t')
+eval1 ctx (TApp t t2) =
+  case eval1 ctx t of
+    Nothing -> Nothing
+    Just t' -> Just (TApp t' t2)
+eval1 _ _ = Nothing
+
+eval :: Context -> Term -> Term
+eval ctx v = case eval1 ctx v of
+  Nothing -> v
+  Just v' -> eval ctx v'
+
+-- Run the parser
+
+runP :: String -> [Term]
 runP s = let (ParseResult vs ctx) = (parse . alexScanTokens) s emptyContext in
-  map (\f -> f emptyContext) vs
+  map (\f -> eval ctx (f ctx)) vs
 
 prettyRun :: String -> [Result]
 prettyRun s = map (\v -> Result v emptyContext) $ runP s 
+
+-- Errors
 
 happyError :: [Token] -> a
 happyError tks = error ("Parse error at " ++ lcn ++ "\nTokens: " ++ (show tks) ++ "\n")
